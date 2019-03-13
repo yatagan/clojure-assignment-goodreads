@@ -1,20 +1,25 @@
 (ns goodreads.core
   (:gen-class)
   (:require [clojure.tools.cli :as cli]
-            [manifold.deferred :as d]))
+            [manifold.deferred :as d]
+            [goodreads.book :as book]))
 
-;; TODO: this implementation is pretty useless :(
-(defn build-recommentations [_]
-  (d/success-deferred
-   [{:title "My Side of the Mountain (Mountain, #1)"
-     :authors [{:name "Jean Craighead George"}]
-     :link "https://www.goodreads.com/book/show/41667.My_Side_of_the_Mountain"}
-    {:title "Incident at Hawk's Hill"
-     :authors [{:name "Allan W. Eckert"}]
-     :link "https://www.goodreads.com/book/show/438131.Incident_at_Hawk_s_Hill"}
-    {:title "The Black Pearl"
-     :authors [{:name "Scott O'Dell"}]
-     :link "https://www.goodreads.com/book/show/124245.The_Black_Pearl"}]))
+;; TODO: this implementation is still pretty useless :(
+(defn build-recommentations
+  [{:keys [token]}]
+  (let [read-shelf (book/fetch-shelf token "read")
+        reading-shelf-ids (->> "currently-reading"
+                               (book/fetch-shelf token)
+                               (map #(:id %))
+                               (set))]
+    (d/success-deferred
+      (->> read-shelf
+           (reduce
+             #(concat %1 (->> %2 :id (book/fetch-similar-books token)))
+             [])
+           (sort-by #(:rating %) >)
+           (remove #(contains? reading-shelf-ids (:id %)))
+           (take 10)))))
 
 (def cli-options [["-t"
                    "--timeout-ms"
@@ -41,13 +46,13 @@
     (cond
       (contains? options :help) (do (println summary) (System/exit 0))
       (some? errors) (do (println errors) (System/exit 1))
-      (empty? args) (do (println "Please, specify user's token") (System/exit 1))      
+      (empty? args) (do (println "Please, specify user's token") (System/exit 1))
       :else (let [config {:token (first args)}
                   books (-> (build-recommentations config)
                             (d/timeout! (:timeout-ms options) ::timeout)
                             deref)]
               (cond
-                (= ::timeout books) (println "Not enough time :(")                
+                (= ::timeout books) (println "Not enough time :(")
                 (empty? books) (println "Nothing found, leave me alone :(")
                 :else (doseq [[i book] (map-indexed vector books)]
                         (println (str "#" (inc i)))
